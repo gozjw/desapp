@@ -6,10 +6,13 @@ import (
 	"crypto/cipher"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/AllenDang/giu"
@@ -28,6 +31,7 @@ var (
 
 	// windowsTTCList = []string{"msyh.ttc", "msjhbd.ttc", "msyhbd.ttc"}
 	windowTTCPath = "c:/Windows/Fonts/msyh.ttc"
+	macTTCPath    = "/System/Library/Fonts/STHeiti Light.ttc"
 
 	font     imgui.Font
 	fontFile string
@@ -35,19 +39,18 @@ var (
 	dataMap = make(map[string]Data, 0)
 )
 
+func recoverPanic() {
+	if err := recover(); err != nil {
+		multiline = ""
+		tips(fmt.Sprintf("秘钥错误：%v", err))
+	}
+}
+
 func updateCombo() {
 	optionList = []string{}
 	for k := range dataMap {
 		optionList = append(optionList, k)
 	}
-}
-
-func GetMainDirectory() string {
-	dir, err := filepath.Abs("./")
-	if err != nil {
-		panic(err)
-	}
-	return strings.Replace(dir, "\\", "/", -1)
 }
 
 func FileExist(path string) bool {
@@ -59,55 +62,55 @@ type Data struct {
 	Data string `json:"data"`
 }
 
-func readFile() {
+func readFile() error {
 	if !FileExist(file) {
-		tips("文件不存在")
-		return
+		return errors.New("文件不存在")
 	}
 	b, err := ioutil.ReadFile(file)
 	if err != nil {
-		tips(fmt.Sprintf("读取文件错误：%v", err))
-		return
+		return fmt.Errorf("读取文件错误：%v", err)
 	}
 	if len(b) == 0 {
 		b = []byte("{}")
 	}
 	err = json.Unmarshal(b, &dataMap)
 	if err != nil {
-		tips(fmt.Sprintf("解析json错误：%v", err))
-		return
+		return fmt.Errorf("解析json错误：%v", err)
 	}
 	updateCombo()
+	return nil
 }
 
-func writeFile() {
-	if !FileExist(file) {
-		tips("文件不存在")
-		return
-	}
+func writeFile() error {
 	b, err := json.Marshal(dataMap)
 	if err != nil {
-		tips(fmt.Sprintf("构造json错误：%v", err))
-		return
+		return fmt.Errorf("构造json错误：%v", err)
 	}
 	f, err := os.OpenFile(file, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0666)
 	if err != nil {
-		tips(fmt.Sprintf("打开文件错误：%v", err))
-		return
+		return fmt.Errorf("打开文件错误：%v", err)
 	}
 	_, err = f.Write(b)
 	if err != nil {
-		tips(fmt.Sprintf("写入文件错误：%v", err))
-		return
+		return fmt.Errorf("写入文件错误：%v", err)
 	}
 	f.Close()
 	updateCombo()
-	tips("添加成功")
+	return nil
 }
 
 func init() {
-	fontFile = windowTTCPath
-	file = GetMainDirectory() + "/" + fileName
+	switch runtime.GOOS {
+	case "darwin":
+		fontFile = macTTCPath
+	default:
+		fontFile = windowTTCPath
+	}
+	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		log.Fatal(err)
+	}
+	file = strings.ReplaceAll(dir, "/desapp.app/Contents/MacOS", "") + "/" + fileName
 }
 
 func initFont() {
@@ -131,22 +134,33 @@ func loop() {
 	}
 
 	giu.PushFont(font)
-	giu.SingleWindow("Window", giu.Layout{
+	giu.SingleWindow("加密器", giu.Layout{
 		giu.Line(
-			giu.InputText("文件位置", 0, &file),
+			giu.InputTextV("文件", 0, &file, giu.InputTextFlagsNone, nil, nil),
+			giu.Button("解析", func() {
+				file = strings.TrimSpace(file)
+				if file == "" {
+					tips("文件为空")
+					return
+				}
+				readFile()
+			}),
 		),
 		giu.Line(
-			giu.InputTextV("密码(小于等于16位)", 0, &password, giu.InputTextFlagsPassword, nil, nil),
-			giu.Button("查看密码", func() {
+			giu.InputTextV("密码(16位)", 0, &password, giu.InputTextFlagsPassword, nil, nil),
+			giu.Button("查看", func() {
 				if password != "" {
 					tips(password)
 				}
 			}),
-			giu.Label(""),
+			giu.Button("清空密码", func() {
+				password = ""
+			}),
 		),
 		giu.Line(
 			giu.InputText("加密项", 0, &addOption),
 			giu.Button("添加", func() {
+				defer recoverPanic()
 				if password == "" {
 					tips("密码为空")
 					return
@@ -173,46 +187,97 @@ func loop() {
 					return
 				}
 				dataMap[addOption] = Data{Data: base64.StdEncoding.EncodeToString(b)}
-				writeFile()
+				if err := writeFile(); err == nil {
+					tips("添加成功")
+				}
+			}),
+			giu.Button("清空加密项", func() {
+				addOption = ""
 			}),
 		),
 		giu.Line(
-			giu.Combo("选择解密项", decOption, optionList, &selected, 0, 0, func() {}),
+			giu.Combo("解密项", decOption, optionList, &selected, 0, 0, func() {
+				multiline = ""
+			}),
 			giu.Button("解密", func() {
+				defer recoverPanic()
 				if decOption == "" {
 					tips("请选择需要解密的项")
 					return
 				}
 				if password == "" {
+					multiline = ""
 					tips("密码为空")
 					return
 				}
 				data, ok := dataMap[decOption]
-				fmt.Println(data, ok, decOption)
 				if !ok {
+					multiline = ""
 					tips("解密项不存在")
 					return
 				}
 				be, err := base64.StdEncoding.DecodeString(data.Data)
 				if err != nil {
+					multiline = ""
 					tips(fmt.Sprintf("base64解密失败：%v", err))
 					return
 				}
 				b, err := decryptAES(be, []byte(password))
 				if err != nil {
+					multiline = ""
 					tips(fmt.Sprintf("解密失败：%v", err))
 					return
 				}
 				multiline = string(b)
 			}),
-			giu.Button("修改", func() {}),
-			giu.Button("删除", func() {}),
+			giu.Button("修改", func() {
+				defer recoverPanic()
+				if password == "" {
+					tips("密码为空")
+					return
+				}
+				if !checkPassword(password) {
+					tips("密码过长")
+					return
+				}
+				if decOption == "" {
+					tips("解密项为空")
+					return
+				}
+				if _, ok := dataMap[decOption]; !ok {
+					tips("解密项已存在")
+					return
+				}
+				if multiline == "" {
+					tips("明文为空")
+					return
+				}
+				b, err := encryptAES([]byte(multiline), []byte(password))
+				if err != nil {
+					tips(fmt.Sprintf("加密失败：%v", err))
+					return
+				}
+				dataMap[decOption] = Data{Data: base64.StdEncoding.EncodeToString(b)}
+				if err := writeFile(); err == nil {
+					tips("修改成功")
+				}
+			}),
+			giu.Button("删除", func() {
+				delete(dataMap, decOption)
+				multiline = ""
+				if err := writeFile(); err == nil {
+					tips("删除成功")
+				}
+			}),
 		),
 		giu.Line(
-			giu.Label("明文："),
+			giu.LabelWrapped("明文："),
+			giu.Button("清空文本", func() {
+				multiline = ""
+			}),
 		),
 		giu.Line(
-			giu.InputTextMultiline("", &multiline, -1, -1, 0, nil, nil),
+			giu.InputTextMultiline("", &multiline, -1, -1, giu.InputTextFlagsNone, nil, nil),
 		),
 		giu.PrepareMsgbox(),
 	})
@@ -220,7 +285,7 @@ func loop() {
 }
 
 func main() {
-	w := giu.NewMasterWindow("加密器", 850, 600, 0, initFont)
+	w := giu.NewMasterWindow("工具", 850, 600, 0, initFont)
 	readFile()
 	w.Main(loop)
 }
