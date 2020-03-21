@@ -17,6 +17,8 @@ import (
 
 	"github.com/AllenDang/giu"
 	"github.com/AllenDang/giu/imgui"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 var (
@@ -49,10 +51,40 @@ func recoverPanic() {
 	}
 }
 
+// 中文排序
+func ChineseLess(i, j string) bool {
+	a, _ := UTF82GBK(i)
+	b, _ := UTF82GBK(j)
+	bLen := len(b)
+	for idx, chr := range a {
+		if idx > bLen-1 {
+			return false
+		}
+		if chr != b[idx] {
+			return chr < b[idx]
+		}
+	}
+	return true
+}
+
+//UTF82GBK : transform UTF8 rune into GBK byte array
+func UTF82GBK(src string) ([]byte, error) {
+	GB18030 := simplifiedchinese.All[0]
+	return ioutil.ReadAll(transform.NewReader(bytes.NewReader([]byte(src)), GB18030.NewEncoder()))
+}
+
 func updateCombo() {
 	optionList = []string{}
 	for k := range dataMap {
 		optionList = append(optionList, k)
+	}
+	// 排序
+	for i := 0; i < len(optionList)-1; i++ {
+		for j := i + 1; j < len(optionList); j++ {
+			if !ChineseLess(optionList[i], optionList[j]) {
+				optionList[i], optionList[j] = optionList[j], optionList[i]
+			}
+		}
 	}
 }
 
@@ -149,26 +181,7 @@ func confirm(msg string, opera int) {
 	})
 }
 func operaModify() {
-	if password == "" {
-		tips("密码为空")
-		return
-	}
-	if !checkPassword(password) {
-		tips("密码过长")
-		return
-	}
-	if decOption == "" {
-		tips("解密项为空")
-		return
-	}
-	if _, ok := dataMap[decOption]; !ok {
-		tips("解密项已存在")
-		return
-	}
-	if multiline == "" {
-		tips("明文为空")
-		return
-	}
+	defer recoverPanic()
 	b, err := encryptAES([]byte(multiline), []byte(password))
 	if err != nil {
 		tips(fmt.Sprintf("加密失败：%v", err))
@@ -209,7 +222,7 @@ func loop() {
 			}),
 		),
 		giu.Line(
-			giu.InputTextV("密码(16位)", 0, &password, giu.InputTextFlagsPassword, nil, nil),
+			giu.InputTextV("密码(<=16)", 0, &password, giu.InputTextFlagsPassword, nil, nil),
 			giu.Button("查看", func() {
 				if password != "" {
 					tips(password)
@@ -293,7 +306,26 @@ func loop() {
 				multiline = string(b)
 			}),
 			giu.Button("修改", func() {
-				defer recoverPanic()
+				if password == "" {
+					tips("密码为空")
+					return
+				}
+				if !checkPassword(password) {
+					tips("密码过长")
+					return
+				}
+				if decOption == "" {
+					tips("解密项为空")
+					return
+				}
+				if _, ok := dataMap[decOption]; !ok {
+					tips("解密项已存在")
+					return
+				}
+				if multiline == "" {
+					tips("明文为空")
+					return
+				}
 				confirm(fmt.Sprintf("确认修改“%s”？", decOption), operaFlagModify)
 			}),
 			giu.Button("删除", func() {
