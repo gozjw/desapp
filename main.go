@@ -37,6 +37,9 @@ var (
 	fontFile string
 
 	dataMap = make(map[string]Data, 0)
+
+	operaFlagDelete = 0
+	operaFlagModify = 1
 )
 
 func recoverPanic() {
@@ -99,6 +102,16 @@ func writeFile() error {
 	return nil
 }
 
+// GetMainDirectory 获取项目根目录
+func GetMainDirectory() string {
+	dir, err := filepath.Abs("./")
+	if err != nil {
+		log.Fatal(err)
+	}
+	//兼容linux "\\"转"/"
+	return strings.Replace(dir, "\\", "/", -1)
+}
+
 func init() {
 	switch runtime.GOOS {
 	case "darwin":
@@ -106,11 +119,8 @@ func init() {
 	default:
 		fontFile = windowTTCPath
 	}
-	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
-	if err != nil {
-		log.Fatal(err)
-	}
-	file = strings.ReplaceAll(dir, "/desapp.app/Contents/MacOS", "") + "/" + fileName
+
+	file = strings.ReplaceAll(GetMainDirectory(), "/desapp.app/Contents/MacOS", "") + "/" + fileName
 }
 
 func initFont() {
@@ -123,11 +133,63 @@ func initFont() {
 }
 
 func tips(msg string) {
-	giu.Msgbox("提示", msg, 0, func(i giu.DialogResult) {})
+	giu.Msgbox("提示", msg, giu.MsgboxButtonsOk, func(i giu.DialogResult) {})
+}
+func confirm(msg string, opera int) {
+	giu.Msgbox("确认", msg, giu.MsgboxButtonsYesNo, func(i giu.DialogResult) {
+		if i == giu.DialogResultNo {
+			return
+		}
+		switch opera {
+		case operaFlagDelete:
+			deleteOpera()
+		case operaFlagModify:
+			operaModify()
+		}
+	})
+}
+func operaModify() {
+	if password == "" {
+		tips("密码为空")
+		return
+	}
+	if !checkPassword(password) {
+		tips("密码过长")
+		return
+	}
+	if decOption == "" {
+		tips("解密项为空")
+		return
+	}
+	if _, ok := dataMap[decOption]; !ok {
+		tips("解密项已存在")
+		return
+	}
+	if multiline == "" {
+		tips("明文为空")
+		return
+	}
+	b, err := encryptAES([]byte(multiline), []byte(password))
+	if err != nil {
+		tips(fmt.Sprintf("加密失败：%v", err))
+		return
+	}
+	dataMap[decOption] = Data{Data: base64.StdEncoding.EncodeToString(b)}
+	if err := writeFile(); err == nil {
+		tips("修改成功")
+	}
+}
+
+func deleteOpera() {
+	delete(dataMap, decOption)
+	multiline = ""
+	if err := writeFile(); err == nil {
+		tips("删除成功")
+	}
 }
 
 func loop() {
-	if len(optionList) == 0 {
+	if len(optionList) == 0 || selected >= int32(len(optionList)) {
 		decOption = ""
 	} else {
 		decOption = optionList[selected]
@@ -232,42 +294,10 @@ func loop() {
 			}),
 			giu.Button("修改", func() {
 				defer recoverPanic()
-				if password == "" {
-					tips("密码为空")
-					return
-				}
-				if !checkPassword(password) {
-					tips("密码过长")
-					return
-				}
-				if decOption == "" {
-					tips("解密项为空")
-					return
-				}
-				if _, ok := dataMap[decOption]; !ok {
-					tips("解密项已存在")
-					return
-				}
-				if multiline == "" {
-					tips("明文为空")
-					return
-				}
-				b, err := encryptAES([]byte(multiline), []byte(password))
-				if err != nil {
-					tips(fmt.Sprintf("加密失败：%v", err))
-					return
-				}
-				dataMap[decOption] = Data{Data: base64.StdEncoding.EncodeToString(b)}
-				if err := writeFile(); err == nil {
-					tips("修改成功")
-				}
+				confirm(fmt.Sprintf("确认修改“%s”？", decOption), operaFlagModify)
 			}),
 			giu.Button("删除", func() {
-				delete(dataMap, decOption)
-				multiline = ""
-				if err := writeFile(); err == nil {
-					tips("删除成功")
-				}
+				confirm(fmt.Sprintf("确认删除“%s”？", decOption), operaFlagDelete)
 			}),
 		),
 		giu.Line(
@@ -285,7 +315,7 @@ func loop() {
 }
 
 func main() {
-	w := giu.NewMasterWindow("工具", 850, 600, 0, initFont)
+	w := giu.NewMasterWindow("工具 v1.0.0 kiwi", 850, 600, 0, initFont)
 	readFile()
 	w.Main(loop)
 }
