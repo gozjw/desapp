@@ -1,25 +1,25 @@
 package main
 
 import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/AllenDang/giu"
 	"github.com/AllenDang/giu/imgui"
-	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
+	"github.com/gozjw/desapp/utils"
 )
+
+func recoverPanic() {
+	if err := recover(); err != nil {
+		multiline = ""
+		tips(fmt.Sprintf("秘钥错误：%v", err))
+	}
+}
 
 var (
 	fileName   = "mySecret.json"
@@ -38,67 +38,23 @@ var (
 	font     imgui.Font
 	fontFile string
 
-	dataMap = make(map[string]Data, 0)
+	secretData = utils.Secret{}
 
 	operaFlagDelete = 0
 	operaFlagModify = 1
 )
 
-func recoverPanic() {
-	if err := recover(); err != nil {
-		multiline = ""
-		tips(fmt.Sprintf("秘钥错误：%v", err))
-	}
-}
-
-// 中文排序
-func ChineseLess(i, j string) bool {
-	a, _ := UTF82GBK(i)
-	b, _ := UTF82GBK(j)
-	bLen := len(b)
-	for idx, chr := range a {
-		if idx > bLen-1 {
-			return false
-		}
-		if chr != b[idx] {
-			return chr < b[idx]
-		}
-	}
-	return true
-}
-
-//UTF82GBK : transform UTF8 rune into GBK byte array
-func UTF82GBK(src string) ([]byte, error) {
-	GB18030 := simplifiedchinese.All[0]
-	return ioutil.ReadAll(transform.NewReader(bytes.NewReader([]byte(src)), GB18030.NewEncoder()))
-}
-
 func updateCombo() {
-	optionList = []string{}
-	for k := range dataMap {
-		optionList = append(optionList, k)
+	keys, err := secretData.GetOptionKeys()
+	if err != nil {
+		tips(fmt.Sprintf("获取解密项：%v", err))
+		return
 	}
-	// 排序
-	for i := 0; i < len(optionList)-1; i++ {
-		for j := i + 1; j < len(optionList); j++ {
-			if !ChineseLess(optionList[i], optionList[j]) {
-				optionList[i], optionList[j] = optionList[j], optionList[i]
-			}
-		}
-	}
-}
-
-func FileExist(path string) bool {
-	_, err := os.Lstat(path)
-	return !os.IsNotExist(err)
-}
-
-type Data struct {
-	Data string `json:"data"`
+	optionList = keys
 }
 
 func readFile() error {
-	if !FileExist(file) {
+	if !utils.FileExist(file) {
 		return errors.New("文件不存在")
 	}
 	b, err := ioutil.ReadFile(file)
@@ -108,7 +64,7 @@ func readFile() error {
 	if len(b) == 0 {
 		b = []byte("{}")
 	}
-	err = json.Unmarshal(b, &dataMap)
+	err = json.Unmarshal(b, &secretData)
 	if err != nil {
 		return fmt.Errorf("解析json错误：%v", err)
 	}
@@ -117,7 +73,7 @@ func readFile() error {
 }
 
 func writeFile() error {
-	b, err := json.Marshal(dataMap)
+	b, err := json.Marshal(secretData)
 	if err != nil {
 		return fmt.Errorf("构造json错误：%v", err)
 	}
@@ -134,17 +90,8 @@ func writeFile() error {
 	return nil
 }
 
-// GetMainDirectory 获取项目根目录
-func GetMainDirectory() string {
-	dir, err := filepath.Abs("./")
-	if err != nil {
-		log.Fatal(err)
-	}
-	//兼容linux "\\"转"/"
-	return strings.Replace(dir, "\\", "/", -1)
-}
-
 func init() {
+	secretData.Option = make(map[string]utils.Option)
 	switch runtime.GOOS {
 	case "darwin":
 		fontFile = macTTCPath
@@ -152,7 +99,7 @@ func init() {
 		fontFile = windowTTCPath
 	}
 
-	file = strings.ReplaceAll(GetMainDirectory(), "/desapp.app/Contents/MacOS", "") + "/" + fileName
+	file = strings.ReplaceAll(utils.GetMainDirectory(), "/desapp.app/Contents/MacOS", "") + "/" + fileName
 }
 
 func initFont() {
@@ -182,21 +129,22 @@ func confirm(msg string, opera int) {
 }
 func operaModify() {
 	defer recoverPanic()
-	b, err := encryptAES([]byte(multiline), []byte(password))
-	if err != nil {
-		tips(fmt.Sprintf("加密失败：%v", err))
+	if err := secretData.Update(password, decOption, multiline); err != nil {
+		tips(fmt.Sprintf("修改失败：%v", err))
 		return
 	}
-	dataMap[decOption] = Data{Data: base64.StdEncoding.EncodeToString(b)}
 	if err := writeFile(); err == nil {
 		tips("修改成功")
 	}
 }
 
 func deleteOpera() {
-	delete(dataMap, decOption)
-	multiline = ""
+	if err := secretData.Delete(password, decOption); err != nil {
+		tips(fmt.Sprintf("删除失败：%v", err))
+		return
+	}
 	if err := writeFile(); err == nil {
+		multiline = ""
 		tips("删除成功")
 	}
 }
@@ -236,32 +184,10 @@ func loop() {
 			giu.InputText("加密项", 0, &addOption),
 			giu.Button("添加", func() {
 				defer recoverPanic()
-				if password == "" {
-					tips("密码为空")
+				if err := secretData.Add(password, addOption, multiline); err != nil {
+					tips(fmt.Sprintf("添加失败：%v", err))
 					return
 				}
-				if !checkPassword(password) {
-					tips("密码过长")
-					return
-				}
-				if addOption == "" {
-					tips("加密项为空")
-					return
-				}
-				if _, ok := dataMap[addOption]; ok {
-					tips("加密项已存在")
-					return
-				}
-				if multiline == "" {
-					tips("明文为空")
-					return
-				}
-				b, err := encryptAES([]byte(multiline), []byte(password))
-				if err != nil {
-					tips(fmt.Sprintf("加密失败：%v", err))
-					return
-				}
-				dataMap[addOption] = Data{Data: base64.StdEncoding.EncodeToString(b)}
 				if err := writeFile(); err == nil {
 					tips("添加成功")
 				}
@@ -276,56 +202,14 @@ func loop() {
 			}),
 			giu.Button("解密", func() {
 				defer recoverPanic()
-				if decOption == "" {
-					tips("请选择需要解密的项")
-					return
-				}
-				if password == "" {
-					multiline = ""
-					tips("密码为空")
-					return
-				}
-				data, ok := dataMap[decOption]
-				if !ok {
-					multiline = ""
-					tips("解密项不存在")
-					return
-				}
-				be, err := base64.StdEncoding.DecodeString(data.Data)
+				pt, err := secretData.GetOptionDataByKey(password, decOption)
+				multiline = pt
 				if err != nil {
-					multiline = ""
-					tips(fmt.Sprintf("base64解密失败：%v", err))
-					return
-				}
-				b, err := decryptAES(be, []byte(password))
-				if err != nil {
-					multiline = ""
 					tips(fmt.Sprintf("解密失败：%v", err))
 					return
 				}
-				multiline = string(b)
 			}),
 			giu.Button("修改", func() {
-				if password == "" {
-					tips("密码为空")
-					return
-				}
-				if !checkPassword(password) {
-					tips("密码过长")
-					return
-				}
-				if decOption == "" {
-					tips("解密项为空")
-					return
-				}
-				if _, ok := dataMap[decOption]; !ok {
-					tips("解密项已存在")
-					return
-				}
-				if multiline == "" {
-					tips("明文为空")
-					return
-				}
 				confirm(fmt.Sprintf("确认修改“%s”？", decOption), operaFlagModify)
 			}),
 			giu.Button("删除", func() {
@@ -350,51 +234,4 @@ func main() {
 	w := giu.NewMasterWindow("工具 v1.0.0 kiwi", 850, 600, 0, initFont)
 	readFile()
 	w.Main(loop)
-}
-
-// 填充数据
-func padding(src []byte, blockSize int) []byte {
-	padNum := blockSize - len(src)%blockSize
-	pad := bytes.Repeat([]byte{byte(padNum)}, padNum)
-	return append(src, pad...)
-}
-
-// 去掉填充数据
-func unpadding(src []byte) []byte {
-	n := len(src)
-	unPadNum := int(src[n-1])
-	return src[:n-unPadNum]
-}
-
-// 加密
-func encryptAES(src []byte, key []byte) ([]byte, error) {
-	key = padding(key, 16)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	src = padding(src, block.BlockSize())
-	blockMode := cipher.NewCBCEncrypter(block, key)
-	blockMode.CryptBlocks(src, src)
-	return src, nil
-}
-
-// 解密
-func decryptAES(src []byte, key []byte) ([]byte, error) {
-	key = padding(key, 16)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	blockMode := cipher.NewCBCDecrypter(block, key)
-	blockMode.CryptBlocks(src, src)
-	src = unpadding(src)
-	return src, nil
-}
-
-func checkPassword(password string) bool {
-	if len(password) > 16 {
-		return false
-	}
-	return true
 }
