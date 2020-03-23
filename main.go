@@ -22,6 +22,7 @@ func recoverPanic() {
 }
 
 var (
+	isDebug    = false
 	fileName   = "mySecret.json"
 	file       string
 	password   string
@@ -39,6 +40,8 @@ var (
 	fontFile string
 
 	secretData = utils.Secret{}
+
+	mainDir = ""
 
 	operaFlagDelete = 0
 	operaFlagModify = 1
@@ -98,8 +101,12 @@ func init() {
 	default:
 		fontFile = windowTTCPath
 	}
+	mainDir = utils.GetFileDirectory()
+	if isDebug {
+		mainDir = utils.GetWorkDirectory()
+	}
 
-	file = strings.ReplaceAll(utils.GetMainDirectory(), "/desapp.app/Contents/MacOS", "") + "/" + fileName
+	file = strings.ReplaceAll(mainDir, "/desapp.app/Contents/MacOS", "") + "/" + fileName
 }
 
 func initFont() {

@@ -8,7 +8,7 @@ import (
 	"golang.org/x/text/transform"
 )
 
-// 中文排序
+// ChineseLess 中文排序
 func ChineseLess(i, j string) bool {
 	a, _ := UTF82GBK(i)
 	b, _ := UTF82GBK(j)
@@ -30,6 +30,7 @@ func UTF82GBK(src string) ([]byte, error) {
 	return ioutil.ReadAll(transform.NewReader(bytes.NewReader([]byte(src)), GB18030.NewEncoder()))
 }
 
+// CheckPassword 检查密码
 func CheckPassword(password string) bool {
 	if len(password) <= 0 || len(password) > 16 {
 		return false

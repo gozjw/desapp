@@ -22,7 +22,7 @@ func unpadding(src []byte) []byte {
 	return src[:n-unPadNum]
 }
 
-// 加密
+// EncryptAES 加密
 func EncryptAES(src []byte, key []byte) ([]byte, error) {
 	key = padding(key, 16)
 	block, err := aes.NewCipher(key)
@@ -35,7 +35,7 @@ func EncryptAES(src []byte, key []byte) ([]byte, error) {
 	return src, nil
 }
 
-// 解密
+// DecryptAES 解密
 func DecryptAES(src []byte, key []byte) ([]byte, error) {
 	key = padding(key, 16)
 	block, err := aes.NewCipher(key)
