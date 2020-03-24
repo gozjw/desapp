@@ -6,46 +6,81 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"runtime"
 	"strings"
 
-	"github.com/AllenDang/giu"
-	"github.com/AllenDang/giu/imgui"
+	"github.com/andlabs/ui"
 	"github.com/gozjw/desapp/utils"
 )
 
 func recoverPanic() {
 	if err := recover(); err != nil {
-		multiline = ""
 		tips(fmt.Sprintf("秘钥错误：%v", err))
 	}
 }
 
+func tips(s string) {
+	ui.MsgBox(mainwin, "提示", s)
+}
+
+func confirm(s string) {
+	confirmWin := ui.NewWindow("确认", 200, 150, true)
+	yesButton := ui.NewButton("Yes")
+	yesButton.OnClicked(func(b *ui.Button) {
+		confirmWin.Destroy()
+	})
+	noButton := ui.NewButton("No")
+	noButton.OnClicked(func(b *ui.Button) {
+		confirmWin.Destroy()
+	})
+
+	confirmWin.SetMargined(true)
+	vbox := ui.NewVerticalBox()
+	vbox.SetPadded(true)
+	grid := ui.NewGrid()
+	grid.SetPadded(true)
+	vbox.Append(grid, false)
+	grid.Append(ui.NewLabel(s), 0, 0, 2, 1, false, ui.AlignCenter, false, ui.AlignCenter)
+	grid.Append(yesButton, 1, 1, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+	grid.Append(noButton, 1, 1, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+	confirmWin.SetChild(vbox)
+	confirmWin.OnClosing(func(*ui.Window) bool {
+		return true
+	})
+	confirmWin.Show()
+}
+
 var (
-	isDebug    = false
-	fileName   = "mySecret.json"
-	file       string
-	password   string
-	addOption  string
-	decOption  string
-	optionList []string
-	selected   int32
-	multiline  string
+	mainwin = ui.NewWindow("工具 v1.0.0 kiwi", 640, 600, true)
 
-	// windowsTTCList = []string{"msyh.ttc", "msjhbd.ttc", "msyhbd.ttc"}
-	windowTTCPath = "c:/Windows/Fonts/msyh.ttc"
-	macTTCPath    = "/System/Library/Fonts/STHeiti Light.ttc"
+	grid = ui.NewGrid()
 
-	font     imgui.Font
-	fontFile string
+	openFilebutton = ui.NewButton("打开文件")
+	fileEntry      = ui.NewEntry()
+	passwordEntry  = ui.NewPasswordEntry()
+	optionCombobox = ui.NewEditableCombobox()
+
+	watchButton   = ui.NewButton("查看密码")
+	decryptButton = ui.NewButton("解密")
+	addButton     = ui.NewButton("添加")
+	updateButton  = ui.NewButton("修改")
+	deleteButton  = ui.NewButton("删除")
+
+	readButton           = ui.NewButton("重新解析文件")
+	emptyPasswordButton  = ui.NewButton("清空密码框")
+	emptyPlaintextButton = ui.NewButton("清空明文框")
+
+	fileName = "mySecret.json"
+	file     = ""
 
 	secretData = utils.Secret{}
-
-	mainDir = ""
-
-	operaFlagDelete = 0
-	operaFlagModify = 1
+	mainDir    = ""
 )
+
+func init() {
+	secretData.Option = make(map[string]utils.Option)
+	mainDir = utils.GetWorkDirectory()
+	file = strings.ReplaceAll(mainDir, "/desapp.app/Contents/MacOS", "") + "/" + fileName
+}
 
 func updateCombo() {
 	keys, err := secretData.GetOptionKeys()
@@ -53,7 +88,12 @@ func updateCombo() {
 		tips(fmt.Sprintf("获取解密项：%v", err))
 		return
 	}
-	optionList = keys
+	optionCombobox.Hide()
+	optionCombobox = ui.NewEditableCombobox()
+	for _, v := range keys {
+		optionCombobox.Append(v)
+	}
+	grid.Append(optionCombobox, 1, 2, 5, 1, true, ui.AlignFill, false, ui.AlignFill)
 }
 
 func readFile() error {
@@ -93,152 +133,89 @@ func writeFile() error {
 	return nil
 }
 
-func init() {
-	secretData.Option = make(map[string]utils.Option)
-	switch runtime.GOOS {
-	case "darwin":
-		fontFile = macTTCPath
-	default:
-		fontFile = windowTTCPath
-	}
-	mainDir = utils.GetFileDirectory()
-	if isDebug {
-		mainDir = utils.GetWorkDirectory()
-	}
+func mySecret() ui.Control {
+	//垂直框
+	vbox := ui.NewVerticalBox()
+	vbox.SetPadded(true)
 
-	file = strings.ReplaceAll(mainDir, "/desapp.app/Contents/MacOS", "") + "/" + fileName
-}
+	grid.SetPadded(true)
+	vbox.Append(grid, false)
 
-func initFont() {
-	fonts := giu.Context.IO().Fonts()
-	font = fonts.AddFontFromFileTTFV(
-		fontFile,                       // <- Font file path
-		20,                             // <- Font size
-		imgui.DefaultFontConfig,        // <- Usually you don't need to modify this
-		fonts.GlyphRangesChineseFull()) // <- Add Chinese glyph ranges to display chinese characters
-}
-
-func tips(msg string) {
-	giu.Msgbox("提示", msg, giu.MsgboxButtonsOk, func(i giu.DialogResult) {})
-}
-func confirm(msg string, opera int) {
-	giu.Msgbox("确认", msg, giu.MsgboxButtonsYesNo, func(i giu.DialogResult) {
-		if i == giu.DialogResultNo {
-			return
-		}
-		switch opera {
-		case operaFlagDelete:
-			deleteOpera()
-		case operaFlagModify:
-			operaModify()
+	// 操作
+	fileEntry.SetText(file)
+	openFilebutton.OnClicked(func(*ui.Button) {
+		fileEntry.SetText(ui.OpenFile(mainwin))
+	})
+	watchButton.OnClicked(func(*ui.Button) {
+		password := passwordEntry.Text()
+		if password != "" {
+			// tips(password)
+			confirm("")
 		}
 	})
-}
-func operaModify() {
-	defer recoverPanic()
-	if err := secretData.Update(password, decOption, multiline); err != nil {
-		tips(fmt.Sprintf("修改失败：%v", err))
-		return
+
+	// 布局
+	grid.Append(ui.NewLabel("文件"), 0, 0, 1, 1, false, ui.AlignCenter, false, ui.AlignCenter)
+	grid.Append(fileEntry, 1, 0, 4, 1, true, ui.AlignFill, false, ui.AlignFill)
+	grid.Append(openFilebutton, 5, 0, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+
+	grid.Append(ui.NewLabel("密码"), 0, 1, 1, 1, false, ui.AlignCenter, false, ui.AlignCenter)
+	grid.Append(passwordEntry, 1, 1, 5, 1, true, ui.AlignFill, false, ui.AlignFill)
+
+	grid.Append(ui.NewLabel("加密项"), 0, 2, 1, 1, false, ui.AlignCenter, false, ui.AlignCenter)
+	// grid.Append(optionCombobox, 1, 2, 5, 1, true, ui.AlignFill, false, ui.AlignFill)
+
+	grid.Append(ui.NewLabel("操作"), 0, 3, 1, 1, false, ui.AlignCenter, false, ui.AlignCenter)
+	grid.Append(watchButton, 1, 3, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+	grid.Append(decryptButton, 2, 3, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+	grid.Append(addButton, 3, 3, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+	grid.Append(updateButton, 4, 3, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+	grid.Append(deleteButton, 5, 3, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+
+	grid.Append(ui.NewLabel("输入"), 0, 4, 1, 1, false, ui.AlignCenter, false, ui.AlignCenter)
+	grid.Append(readButton, 1, 4, 1, 1, true, ui.AlignFill, false, ui.AlignFill)
+	grid.Append(emptyPasswordButton, 2, 4, 2, 1, true, ui.AlignFill, false, ui.AlignFill)
+	grid.Append(emptyPlaintextButton, 4, 4, 2, 1, true, ui.AlignFill, false, ui.AlignFill)
+
+	group := ui.NewGroup("明文")
+	group.SetMargined(true)
+	vbox.Append(group, true)
+
+	entryForm := ui.NewForm()
+	entryForm.SetPadded(true)
+	group.SetChild(entryForm)
+
+	entryForm.Append("", ui.NewMultilineEntry(), true)
+
+	err := readFile()
+	if err != nil {
+		tips(fmt.Sprintf("%v", err))
 	}
-	if err := writeFile(); err == nil {
-		tips("修改成功")
-	}
+	return vbox
 }
 
-func deleteOpera() {
-	if err := secretData.Delete(password, decOption); err != nil {
-		tips(fmt.Sprintf("删除失败：%v", err))
-		return
-	}
-	if err := writeFile(); err == nil {
-		multiline = ""
-		tips("删除成功")
-	}
-}
-
-func loop() {
-	if len(optionList) == 0 || selected >= int32(len(optionList)) {
-		decOption = ""
-	} else {
-		decOption = optionList[selected]
-	}
-
-	giu.PushFont(font)
-	giu.SingleWindow("加密器", giu.Layout{
-		giu.Line(
-			giu.InputTextV("文件", 0, &file, giu.InputTextFlagsNone, nil, nil),
-			giu.Button("解析", func() {
-				file = strings.TrimSpace(file)
-				if file == "" {
-					tips("文件为空")
-					return
-				}
-				readFile()
-			}),
-		),
-		giu.Line(
-			giu.InputTextV("密码(<=16)", 0, &password, giu.InputTextFlagsPassword, nil, nil),
-			giu.Button("查看", func() {
-				if password != "" {
-					tips(password)
-				}
-			}),
-			giu.Button("清空密码", func() {
-				password = ""
-			}),
-		),
-		giu.Line(
-			giu.InputText("加密项", 0, &addOption),
-			giu.Button("添加", func() {
-				defer recoverPanic()
-				if err := secretData.Add(password, addOption, multiline); err != nil {
-					tips(fmt.Sprintf("添加失败：%v", err))
-					return
-				}
-				if err := writeFile(); err == nil {
-					tips("添加成功")
-				}
-			}),
-			giu.Button("清空加密项", func() {
-				addOption = ""
-			}),
-		),
-		giu.Line(
-			giu.Combo("解密项", decOption, optionList, &selected, 0, 0, func() {
-				multiline = ""
-			}),
-			giu.Button("解密", func() {
-				defer recoverPanic()
-				pt, err := secretData.GetOptionDataByKey(password, decOption)
-				multiline = pt
-				if err != nil {
-					tips(fmt.Sprintf("解密失败：%v", err))
-					return
-				}
-			}),
-			giu.Button("修改", func() {
-				confirm(fmt.Sprintf("确认修改“%s”？", decOption), operaFlagModify)
-			}),
-			giu.Button("删除", func() {
-				confirm(fmt.Sprintf("确认删除“%s”？", decOption), operaFlagDelete)
-			}),
-		),
-		giu.Line(
-			giu.LabelWrapped("明文："),
-			giu.Button("清空文本", func() {
-				multiline = ""
-			}),
-		),
-		giu.Line(
-			giu.InputTextMultiline("", &multiline, -1, -1, giu.InputTextFlagsNone, nil, nil),
-		),
-		giu.PrepareMsgbox(),
+//设置UI界面
+func setupUI() {
+	mainwin.OnClosing(func(*ui.Window) bool {
+		ui.Quit()
+		return true
 	})
-	giu.PopFont()
+	ui.OnShouldQuit(func() bool {
+		mainwin.Destroy()
+		return true
+	})
+
+	tab := ui.NewTab()
+	mainwin.SetChild(tab)
+	mainwin.SetMargined(true)
+
+	tab.Append("加密器", mySecret())
+	tab.SetMargined(0, true)
+
+	mainwin.Show()
 }
 
 func main() {
-	w := giu.NewMasterWindow("工具 v1.0.0 kiwi", 850, 600, 0, initFont)
-	readFile()
-	w.Main(loop)
+	ui.Main(setupUI)
+
 }
